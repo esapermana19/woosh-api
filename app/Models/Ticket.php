@@ -6,6 +6,12 @@ use Illuminate\Database\Eloquent\Model;
 
 class Ticket extends Model
 {
-        protected $primaryKey = 'ticket_id';
-        public $timestamps = false;
+    protected $primaryKey = 'ticket_id';
+    protected $fillable = [
+        'order_id',
+        'schedule_id',
+        'seat_number',
+        'status',
+    ];
+    public $timestamps = false;
 }
