@@ -89,6 +89,7 @@ class BookingController extends Controller
 
             return response()->json([
                 'message' => 'Booking berhasil dibuat. Silakan lakukan pembayaran.',
+                'booking_id' => $booking->booking_id,
                 'booking_code' => $bookingCode,
                 'total_bayar' => $totalAmount,
                 'metode' => $request->payment_method,
@@ -157,5 +158,182 @@ class BookingController extends Controller
             DB::rollBack();
             return response()->json(['message' => 'Gagal memperbarui status', 'error' => $e->getMessage()], 500);
         }
+    }
+
+    /**
+     * Dapatkan riwayat tiket/booking user dengan berbagai status pembayaran
+     * GET /api/tickets/history
+     */
+    public function getTicketHistory(Request $request)
+    {
+        $user = $request->user();
+
+        // Query semua booking milik user dengan relasi yang diperlukan
+        $bookings = Booking::where('user_id', $user->user_id)
+            ->with([
+                'schedule' => function ($query) {
+                    $query->with(['departureStation', 'arrivalStation', 'train']);
+                },
+                'payment',
+                'passengers.seat',
+                'ticket'
+            ])
+            ->orderBy('booking_id', 'desc') // Booking terbaru di atas
+            ->get();
+
+        // Transform data untuk response Android
+        $ticketHistory = $bookings->map(function ($booking) {
+            return [
+                'booking_id' => $booking->booking_id,
+                'booking_code' => $booking->booking_code,
+                'status' => $booking->status, // pending, success, failed
+                'schedule' => [
+                    'schedule_id' => $booking->schedule->schedule_id,
+                    'train_name' => $booking->schedule->train->train_name ?? 'Unknown',
+                    'departure' => [
+                        'station_name' => $booking->schedule->departureStation->station_name ?? 'Unknown',
+                        'time' => $booking->schedule->departure_time,
+                    ],
+                    'arrival' => [
+                        'station_name' => $booking->schedule->arrivalStation->station_name ?? 'Unknown',
+                        'time' => $booking->schedule->arrival_time,
+                    ],
+                    'price_per_seat' => (int) $booking->schedule->price,
+                ],
+                'payment' => [
+                    'payment_id' => $booking->payment?->payment_id,
+                    'method' => $booking->payment?->payment_method,
+                    'status' => $booking->payment?->payment_status ?? 'pending', // pending, success, failed
+                    'amount' => (int) $booking->payment?->amount ?? 0,
+                    'date' => $booking->payment?->payment_date,
+                ],
+                'passengers' => $booking->passengers->map(function ($passenger) {
+                    return [
+                        'name' => $passenger->full_name,
+                        'id_number' => $passenger->id_number,
+                        'seat' => $passenger->seat->seat_number ?? 'Unknown',
+                    ];
+                })->toArray(),
+                'ticket' => [
+                    'ticket_id' => $booking->ticket?->ticket_id,
+                    'qr_code' => $booking->ticket?->qr_code,
+                    'status' => $booking->ticket?->status ?? 'not_issued',
+                ],
+                'is_completed' => $booking->status === 'success',
+                'is_paid' => $booking->payment?->payment_status === 'success',
+                'is_pending' => $booking->payment?->payment_status === 'pending',
+            ];
+        });
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Riwayat tiket berhasil diambil',
+            'total' => $ticketHistory->count(),
+            'data' => $ticketHistory,
+            'summary' => [
+                'total_bookings' => $ticketHistory->count(),
+                'completed' => $ticketHistory->where('is_completed', true)->count(),
+                'paid' => $ticketHistory->where('is_paid', true)->count(),
+                'pending' => $ticketHistory->where('is_pending', true)->count(),
+                'failed' => $ticketHistory->where('status', 'failed')->count(),
+            ]
+        ], 200);
+    }
+
+    /**
+     * Filter riwayat tiket berdasarkan status pembayaran
+     * GET /api/tickets/history?filter=pending|paid|failed|completed
+     */
+    public function getTicketHistoryFiltered(Request $request)
+    {
+        $user = $request->user();
+        $filter = $request->query('filter', 'all'); // all, pending, paid, failed, completed
+
+        $query = Booking::where('user_id', $user->user_id)
+            ->with([
+                'schedule' => function ($query) {
+                    $query->with(['departureStation', 'arrivalStation', 'train']);
+                },
+                'payment',
+                'passengers.seat',
+                'ticket'
+            ]);
+
+        // Apply filter berdasarkan status pembayaran
+        switch ($filter) {
+            case 'pending':
+                $query->whereHas('payment', function ($q) {
+                    $q->where('payment_status', 'pending');
+                });
+                break;
+            case 'paid':
+                $query->whereHas('payment', function ($q) {
+                    $q->where('payment_status', 'success');
+                });
+                break;
+            case 'failed':
+                $query->whereHas('payment', function ($q) {
+                    $q->where('payment_status', 'failed');
+                });
+                break;
+            case 'completed':
+                $query->where('status', 'success');
+                break;
+            // 'all' tidak perlu filter tambahan
+        }
+
+        $bookings = $query->orderBy('booking_id', 'desc')->get();
+
+        // Transform data untuk response Android
+        $ticketHistory = $bookings->map(function ($booking) {
+            return [
+                'booking_id' => $booking->booking_id,
+                'booking_code' => $booking->booking_code,
+                'status' => $booking->status,
+                'schedule' => [
+                    'schedule_id' => $booking->schedule->schedule_id,
+                    'train_name' => $booking->schedule->train->train_name ?? 'Unknown',
+                    'departure' => [
+                        'station_name' => $booking->schedule->departureStation->station_name ?? 'Unknown',
+                        'time' => $booking->schedule->departure_time,
+                    ],
+                    'arrival' => [
+                        'station_name' => $booking->schedule->arrivalStation->station_name ?? 'Unknown',
+                        'time' => $booking->schedule->arrival_time,
+                    ],
+                    'price_per_seat' => (int) $booking->schedule->price,
+                ],
+                'payment' => [
+                    'payment_id' => $booking->payment?->payment_id,
+                    'method' => $booking->payment?->payment_method,
+                    'status' => $booking->payment?->payment_status ?? 'pending',
+                    'amount' => (int) $booking->payment?->amount ?? 0,
+                    'date' => $booking->payment?->payment_date,
+                ],
+                'passengers' => $booking->passengers->map(function ($passenger) {
+                    return [
+                        'name' => $passenger->full_name,
+                        'id_number' => $passenger->id_number,
+                        'seat' => $passenger->seat->seat_number ?? 'Unknown',
+                    ];
+                })->toArray(),
+                'ticket' => [
+                    'ticket_id' => $booking->ticket?->ticket_id,
+                    'qr_code' => $booking->ticket?->qr_code,
+                    'status' => $booking->ticket?->status ?? 'not_issued',
+                ],
+                'is_completed' => $booking->status === 'success',
+                'is_paid' => $booking->payment?->payment_status === 'success',
+                'is_pending' => $booking->payment?->payment_status === 'pending',
+            ];
+        });
+
+        return response()->json([
+            'success' => true,
+            'message' => "Riwayat tiket dengan filter '$filter' berhasil diambil",
+            'filter' => $filter,
+            'total' => $ticketHistory->count(),
+            'data' => $ticketHistory,
+        ], 200);
     }
 }

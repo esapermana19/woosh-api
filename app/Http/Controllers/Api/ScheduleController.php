@@ -30,27 +30,49 @@ class ScheduleController extends Controller
             ], 404);
         }
 
-        $schedules = $schedules->map(function ($schedule) {
+        $schedulesExpanded = collect();
 
-            // Total kursi fisik kereta ini (dari tabel seats)
-            $totalSeats = DB::table('seats')->where('train_id', $schedule->train_id)->count();
+        foreach ($schedules as $schedule) {
+            // Get all seat classes and total capacity for this train
+            $classes = DB::table('seats')
+                ->select('class', DB::raw('COUNT(seat_id) as total_seats'))
+                ->where('train_id', $schedule->train_id)
+                ->groupBy('class')
+                ->get();
 
-            // Kursi yang sudah terisi = jumlah penumpang di booking yg pending/paid
-            // (cancelled tidak dihitung karena kursinya sudah bebas kembali)
-            $bookedSeats = DB::table('booking_passengers')
-                ->join('bookings', 'bookings.booking_id', '=', 'booking_passengers.booking_id')
-                ->where('bookings.schedule_id', $schedule->schedule_id)
-                ->whereIn('bookings.status', ['pending', 'paid'])
-                ->count();
+            foreach ($classes as $cls) {
+                // Count booked seats specifically for this class on this schedule
+                $bookedSeats = DB::table('booking_passengers')
+                    ->join('bookings', 'bookings.booking_id', '=', 'booking_passengers.booking_id')
+                    ->join('seats', 'seats.seat_id', '=', 'booking_passengers.seat_id')
+                    ->where('bookings.schedule_id', $schedule->schedule_id)
+                    ->where('seats.class', $cls->class)
+                    ->whereIn('bookings.status', ['pending', 'paid', 'success', 'completed'])
+                    ->count();
 
-            $schedule->available_seats = max(0, $totalSeats - $bookedSeats);
+                $availableSeats = max(0, $cls->total_seats - $bookedSeats);
 
-            return $schedule;
-        });
+                // Determine dynamic price based on class
+                $extraPrice = 0;
+                if ($cls->class === 'business') {
+                    $extraPrice = 100000;
+                } elseif ($cls->class === 'vip') {
+                    $extraPrice = 250000;
+                }
+
+                $scheduleClone = clone $schedule;
+                // Add new dynamic attributes
+                $scheduleClone->train_class = strtoupper($cls->class) . ' CLASS';
+                $scheduleClone->price = $schedule->price + $extraPrice;
+                $scheduleClone->available_seats = $availableSeats;
+
+                $schedulesExpanded->push($scheduleClone);
+            }
+        }
 
         return response()->json([
             'message' => 'Jadwal berhasil ditemukan',
-            'data'    => $schedules
+            'data'    => $schedulesExpanded
         ]);
     }
 

@@ -13,56 +13,75 @@ class ScheduleSeeder extends Seeder
      */
     public function run(): void
     {
-        $stations = [1, 2, 3, 4]; // 1: Halim, 2: Karawang, 3: Padalarang, 4: Tegalluar
-        $trains = [1, 2, 3, 4];   // Train ID yang tersedia
-        
+        // 1. Definisi Stasiun ID dan urutannya
+        // Asumsi dari StationSeeder: 1=Halim, 2=Karawang, 3=Padalarang, 4=Tegalluar
+        $stationsEastbound = [
+            ['id' => 1, 'offset' => 0],   // Halim
+            ['id' => 2, 'offset' => 20],  // Karawang
+            ['id' => 3, 'offset' => 45],  // Padalarang
+            ['id' => 4, 'offset' => 60],  // Tegalluar
+        ];
+
+        $stationsWestbound = [
+            ['id' => 4, 'offset' => 0],   // Tegalluar
+            ['id' => 3, 'offset' => 15],  // Padalarang
+            ['id' => 2, 'offset' => 40],  // Karawang
+            ['id' => 1, 'offset' => 60],  // Halim
+        ];
+
+        // 2. Definisi Kereta 
+        // Asumsi dari TrainSeeder: 1=WT001, 2=WT002, 3=WT003, 4=WT004
+        $trains = [
+            ['id' => 1, 'direction' => 'east', 'time' => '07:00'],
+            ['id' => 2, 'direction' => 'west', 'time' => '09:00'],
+            ['id' => 3, 'direction' => 'east', 'time' => '13:00'],
+            ['id' => 4, 'direction' => 'west', 'time' => '15:00'],
+        ];
+
         $schedules = [];
-        
-        // Buat jadwal untuk 7 hari ke depan (bisa disesuaikan)
-        $startDate = Carbon::today();
-        
-        for ($day = 0; $day < 7; $day++) {
-            $currentDate = $startDate->copy()->addDays($day);
+
+        // Generate untuk hari ini sampai 3 hari ke depan
+        for ($dayOffset = 0; $dayOffset <= 3; $dayOffset++) {
+            $scheduleDate = Carbon::now()->addDays($dayOffset)->format('Y-m-d');
             
-            foreach ($stations as $departure) {
-                foreach ($stations as $arrival) {
-                    if ($departure === $arrival) continue;
-                    
-                    // Jadwal setiap 2 jam dari jam 06:00 sampai 22:00
-                    for ($hour = 6; $hour <= 22; $hour += 2) {
-                        $departureTime = $currentDate->copy()->setHour($hour)->setMinute(0)->setSecond(0);
+            foreach ($trains as $train) {
+                $stations = ($train['direction'] === 'east') ? $stationsEastbound : $stationsWestbound;
+                $startTime = Carbon::parse($scheduleDate . ' ' . $train['time']);
+
+                // Kombinasi semua rute untuk kereta ini
+                for ($i = 0; $i < count($stations) - 1; $i++) {
+                    for ($j = $i + 1; $j < count($stations); $j++) {
                         
-                        // Durasi perjalanan dinamis berdasarkan selisih stasiun (misal 15 menit per stasiun)
-                        // Stasiun 1 ke 4 -> selisih 3 -> 45 menit
-                        $distance = abs($arrival - $departure);
-                        $durationMinutes = $distance * 15;
-                        
-                        $arrivalTime = $departureTime->copy()->addMinutes($durationMinutes);
-                        
-                        // Harga dinamis: misal base price 100rb + (50rb per jarak stasiun)
-                        // 1 ke 2 -> 150.000, 1 ke 4 -> 250.000
-                        $price = ($distance * 50000) + 100000;
-                        
-                        // Tentukan train_id agar bervariasi (rumus sederhana)
-                        $trainIndex = ($hour / 2 + $departure + $day) % count($trains);
-                        $trainId = $trains[$trainIndex];
-                        
+                        $departStation = $stations[$i];
+                        $arriveStation = $stations[$j];
+
+                        // Hitung waktu berangkat dan tiba dinamis
+                        $departureTime = (clone $startTime)->addMinutes($departStation['offset']);
+                        $arrivalTime   = (clone $startTime)->addMinutes($arriveStation['offset']);
+
+                        // Menghitung jumlah segmen yang dilewati
+                        $stationMultiplier = $j - $i;
+
+                        // Harga dasar (Ekonomi).
+                        $basePrice = 100000 + ($stationMultiplier * 50000); 
+
                         $schedules[] = [
-                            'train_id'          => $trainId,
-                            'departure_station' => $departure,
-                            'arrival_station'   => $arrival,
+                            'train_id'          => $train['id'],
+                            'departure_station' => $departStation['id'],
+                            'arrival_station'   => $arriveStation['id'],
                             'departure_time'    => $departureTime->format('Y-m-d H:i:s'),
                             'arrival_time'      => $arrivalTime->format('Y-m-d H:i:s'),
-                            'price'             => $price,
+                            'price'             => $basePrice,
                         ];
                     }
                 }
             }
         }
 
-        // Insert data ke tabel schedules dalam bentuk chunk
-        foreach (array_chunk($schedules, 500) as $chunk) {
-            DB::table('schedules')->insert($chunk);
-        }
+        // Kosongkan tabel schedules jika diperlukan (bisa uncomment)
+        // DB::table('schedules')->truncate();
+
+        // Masukkan seluruh kombinasi jadwal ke database
+        DB::table('schedules')->insert($schedules);
     }
 }

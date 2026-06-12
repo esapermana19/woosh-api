@@ -12,42 +12,38 @@ class SeatSeeder extends Seeder
      */
     public function run(): void
     {
-        // Daftar kelas untuk masing-masing gerbong (1 = vip, 2 = business, 3 = economy)
-        $gerbongs = [
-            1 => 'vip',
-            2 => 'business',
-            3 => 'economy',
+        $seats = [];
+        $classes = [
+            'economy' => 'E',
+            'business' => 'B',
+            'vip' => 'V'
         ];
-        
-        $columns = ['A', 'B', 'C', 'D'];
-        $now = now();
-        $seatsData = [];
 
-        // Asumsi kita buatkan seeder untuk train_id 1 (bisa disesuaikan jika ingin generate banyak kereta)
-        $trains = [1, 2, 3, 4]; 
-
-        foreach ($trains as $train_id) {
-            foreach ($gerbongs as $gerbongNumber => $class) {
-                // Tiap gerbong punya 10 baris kursi (1 sampai 10)
+        // 4 Kereta
+        for ($trainId = 1; $trainId <= 4; $trainId++) {
+            
+            // 3 Gerbong (Kelas) per kereta
+            foreach ($classes as $className => $classCode) {
+                
+                // Asumsi 10 Baris x 4 Kursi (A,B,C,D) per gerbong = 40 kursi
                 for ($row = 1; $row <= 10; $row++) {
-                    foreach ($columns as $column) {
-                        // Format penamaan kursi: G{Gerbong}-{Baris}{Kolom}
-                        // Contoh: G1-1A, G1-10D, G2-3B, dll.
-                        // Jika ingin mengikuti format lama tanpa baris, bisa diubah sesuai kebutuhan
-                        $seat_number = "G{$gerbongNumber}-{$row}{$column}";
-                        
-                        $seatsData[] = [
-                            'train_id'    => $train_id,
-                            'seat_number' => $seat_number,
-                            'class'       => $class,
+                    foreach (['A', 'B', 'C', 'D'] as $col) {
+                        // Nomor kursi, misalnya E-1A, B-2C, V-10D
+                        $seatNumber = $classCode . '-' . $row . $col;
+
+                        $seats[] = [
+                            'train_id' => $trainId,
+                            'seat_number' => $seatNumber,
+                            'class' => $className
                         ];
                     }
                 }
             }
         }
 
-        // Insert data ke tabel seats dalam bentuk chunk untuk performa yang baik
-        foreach (array_chunk($seatsData, 500) as $chunk) {
+        // Karena data bisa cukup banyak (480 data), gunakan chunk agar aman
+        $chunks = array_chunk($seats, 100);
+        foreach ($chunks as $chunk) {
             DB::table('seats')->insert($chunk);
         }
     }

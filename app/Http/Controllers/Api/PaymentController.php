@@ -13,6 +13,7 @@ use Midtrans\Notification;
 // Pastikan namespace Model di bawah ini sesuai dengan nama file & folder Model di Laravel Anda
 use App\Models\Payment;
 use App\Models\Ticket;
+use App\Models\Booking;
 
 class PaymentController extends Controller
 {
@@ -175,17 +176,24 @@ class PaymentController extends Controller
                     } else {
                         // Sukses lewat kartu kredit
                         $payment->update(['payment_status' => 'success']);
+                        $this->handlePaymentSuccess($payment);
                     }
                 }
             } elseif ($transactionStatus == 'settlement') {
                 // PEMBAYARAN SUKSES BERHASIL (Gopay, QRIS, Transfer Bank, dll)
                 $payment->update(['payment_status' => 'success']);
+                $this->handlePaymentSuccess($payment);
             } elseif ($transactionStatus == 'pending') {
                 // User belum bayar di kasir / token masih menunggu transferan
                 $payment->update(['payment_status' => 'pending']);
             } elseif ($transactionStatus == 'deny' || $transactionStatus == 'expire' || $transactionStatus == 'cancel') {
                 // TRANSAKSI GAGAL / EXPIRED / DIBATALKAN
                 $payment->update(['payment_status' => 'failed']);
+                
+                // Update booking status ke cancelled
+                if ($payment->booking_id) {
+                    Booking::where('booking_id', $payment->booking_id)->update(['status' => 'cancelled']);
+                }
             }
 
             return response()->json([
@@ -199,6 +207,57 @@ class PaymentController extends Controller
                 'message' => 'Error memproses webhook: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Helper function untuk memproses sukses pembayaran
+     */
+    private function handlePaymentSuccess($payment)
+    {
+        if ($payment->booking_id) {
+            // 1. Update status booking menjadi 'paid' atau 'completed'
+            Booking::where('booking_id', $payment->booking_id)->update(['status' => 'completed']);
+
+            // 2. Cek apakah tiket sudah pernah dibuat untuk booking ini
+            $ticketExists = Ticket::where('booking_id', $payment->booking_id)->exists();
+
+            if (!$ticketExists) {
+                // Buat tiket baru
+                $qrCodeData = 'TICKET-' . $payment->booking_id . '-' . time();
+                
+                Ticket::create([
+                    'booking_id' => $payment->booking_id,
+                    'qr_code'    => $qrCodeData,
+                    // issued_at otomatis di-handle oleh database (DEFAULT CURRENT_TIMESTAMP) jika dikonfigurasi,
+                    // atau jika menggunakan timestamps Eloquent. Karena di model public $timestamps = false;
+                    // maka kita bisa biarkan kosong kalau db yang handle.
+                ]);
+                
+                Log::info("Ticket created for booking_id: " . $payment->booking_id);
+            }
+        }
+    }
+
+    /**
+     * FITUR TAMBAHAN UNTUK TESTING LOKAL
+     * Karena Midtrans tidak bisa mengirim webhook ke localhost, gunakan ini untuk simulasi sukses.
+     * Akses via browser: http://localhost:8000/api/payment/test-success/{payment_id}
+     */
+    public function simulateSuccess($payment_id)
+    {
+        $payment = Payment::find($payment_id);
+        if (!$payment) {
+            return response()->json(['message' => 'Payment tidak ditemukan'], 404);
+        }
+
+        if ($payment->payment_status !== 'success') {
+            $payment->update(['payment_status' => 'success']);
+            $this->handlePaymentSuccess($payment);
+        }
+
+        return response()->json([
+            'message' => "Simulasi sukses! Tiket berhasil dibuat untuk payment ID: $payment_id"
+        ]);
     }
 
     /**
