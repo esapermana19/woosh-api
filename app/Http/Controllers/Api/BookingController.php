@@ -15,8 +15,26 @@ use Illuminate\Support\Str;
 
 class BookingController extends Controller
 {
+    private function autoCancelExpiredBookings()
+    {
+        $expiredBookings = \App\Models\Booking::where('status', 'pending')
+            ->where('booking_date', '<', now()->subMinutes(10))
+            ->get();
+
+        foreach ($expiredBookings as $booking) {
+            $booking->status = 'cancelled';
+            $booking->save();
+
+            \App\Models\Payment::where('booking_id', $booking->booking_id)
+                ->where('payment_status', 'pending')
+                ->update(['payment_status' => 'failed']);
+        }
+    }
+
     public function checkout(Request $request)
     {
+        $this->autoCancelExpiredBookings();
+
         // 1. Validasi Input Request
         $request->validate([
             'schedule_id' => 'required|integer',
@@ -166,6 +184,8 @@ class BookingController extends Controller
      */
     public function getTicketHistory(Request $request)
     {
+        $this->autoCancelExpiredBookings();
+
         $user = $request->user();
 
         // Query semua booking milik user dengan relasi yang diperlukan
@@ -246,6 +266,8 @@ class BookingController extends Controller
      */
     public function getTicketHistoryFiltered(Request $request)
     {
+        $this->autoCancelExpiredBookings();
+
         $user = $request->user();
         $filter = $request->query('filter', 'all'); // all, pending, paid, failed, completed
 

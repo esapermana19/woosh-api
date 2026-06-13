@@ -10,8 +10,26 @@ use Illuminate\Support\Facades\DB;
 
 class ScheduleController extends Controller
 {
+    private function autoCancelExpiredBookings()
+    {
+        $expiredBookings = \App\Models\Booking::where('status', 'pending')
+            ->where('booking_date', '<', now()->subMinutes(10))
+            ->get();
+
+        foreach ($expiredBookings as $booking) {
+            $booking->status = 'cancelled';
+            $booking->save();
+
+            \App\Models\Payment::where('booking_id', $booking->booking_id)
+                ->where('payment_status', 'pending')
+                ->update(['payment_status' => 'failed']);
+        }
+    }
+
     public function search(Request $request)
     {
+        $this->autoCancelExpiredBookings();
+
         $request->validate([
             'departure_station' => 'required|integer',
             'arrival_station'   => 'required|integer',
@@ -78,6 +96,8 @@ class ScheduleController extends Controller
 
     public function getSeats(Request $request)
     {
+        $this->autoCancelExpiredBookings();
+
         $request->validate([
             'train_id' => 'required|integer',
             'schedule_id' => 'required|integer',

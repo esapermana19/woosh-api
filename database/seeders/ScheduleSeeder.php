@@ -40,8 +40,8 @@ class ScheduleSeeder extends Seeder
 
         $schedules = [];
 
-        // Generate untuk hari ini sampai 3 hari ke depan
-        for ($dayOffset = 0; $dayOffset <= 3; $dayOffset++) {
+        // Generate khusus untuk menambal tanggal 16 Juni yang terlewat (dayOffset = 3 dari tanggal 13 Juni)
+        for ($dayOffset = 3; $dayOffset <= 3; $dayOffset++) {
             $scheduleDate = Carbon::now()->addDays($dayOffset)->format('Y-m-d');
             
             foreach ($trains as $train) {
